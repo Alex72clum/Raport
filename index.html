@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Интерактивный рапорт</title>
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background: #f2f2f7; margin: 0; padding: 12px; display: flex; flex-direction: column; align-items: center; color: #000; }
+        .card { background: #ffffff; border-radius: 14px; padding: 16px; width: 100%; max-width: 500px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 12px; }
+        .date-display { font-size: 0.95rem; color: #8e8e93; text-align: center; font-weight: 500; }
+        .clock { font-size: 2rem; font-weight: 700; text-align: center; color: #1c1c1e; margin: 4px 0 10px; }
+        .timer { font-size: 2.8rem; font-weight: 700; text-align: center; color: #007aff; margin: 10px 0; font-variant-numeric: tabular-nums; }
+        
+        .btn-group { display: flex; gap: 8px; margin-bottom: 12px; }
+        button { flex: 1; padding: 14px 8px; border: none; border-radius: 10px; font-size: 1.05rem; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; }
+        button:active { opacity: 0.7; }
+        .btn-start { background: #34c759; }
+        .btn-start:disabled { background: #d1d1d6; color: #8e8e93; }
+        .btn-stop { background: #ff3b30; }
+        .btn-stop:disabled { background: #d1d1d6; color: #8e8e93; }
+        .btn-excel { background: #107c41; width: 100%; padding: 14px; font-size: 1rem; margin-top: 10px; }
+        .btn-danger { background: #ff9500; font-size: 0.85rem; padding: 8px; }
+
+        .input-group { display: flex; gap: 8px; }
+        textarea { flex: 1; padding: 10px; border: 1px solid #c7c7cc; border-radius: 10px; resize: none; height: 54px; font-size: 0.95rem; background: #fff; }
+        .btn-mic { background: #5856d6; width: 54px; height: 54px; flex: none; border-radius: 10px; font-size: 1.4rem; display: flex; align-items: center; justify-content: center; }
+
+        .filter-group { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        select, input[type="date"] { padding: 8px; border: 1px solid #c7c7cc; border-radius: 8px; font-size: 0.85rem; background: #fff; width: 100%; }
+
+        .table-container { width: 100%; overflow-x: auto; margin-top: 8px; border: 1px solid #e5e5ea; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; table-layout: fixed; }
+        th, td { border-bottom: 1px solid #e5e5ea; padding: 8px 6px; text-align: left; font-size: 0.8rem; word-wrap: break-word; }
+        th { background: #f8f8f8; color: #8e8e93; font-weight: 600; }
+        .time-col { width: 90px; font-size: 0.75rem; color: #3a3a3c; }
+        .dur-col { width: 65px; font-weight: 600; }
+        .sub-time { color: #8e8e93; font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div class="date-display" id="current-date">--.--.----</div>
+    <div class="clock" id="current-time">00:00:00</div>
+    <div class="timer" id="stopwatch">00:00:00</div>
+    
+    <div class="btn-group">
+        <button class="btn-start" id="start-btn" onclick="startOperation()">СТАРТ</button>
+        <button class="btn-stop" id="stop-btn" onclick="stopOperation()" disabled>СТОП</button>
+    </div>
+
+    <div class="input-group">
+        <textarea id="comment" placeholder="Комментарий..."></textarea>
+        <button class="btn-mic" id="mic-btn" onclick="toggleVoice()">🎙️</button>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin: 0 0 10px 0; font-size: 1.1rem;">Журнал операций</h3>
+    
+    <div class="filter-group">
+        <select id="filter-period" onchange="onFilterChange()">
+            <option value="today">За сегодня</option>
+            <option value="month">За текущий месяц</option>
+            <option value="all">За всё время</option>
+            <option value="custom">Указать период</option>
+        </select>
+        <button class="btn-danger" onclick="clearOldData()">Удалить > 30 дней</button>
+    </div>
+
+    <div class="filter-group" id="custom-date-group" style="display: none;">
+        <input type="date" id="date-from" onchange="renderTable()">
+        <input type="date" id="date-to" onchange="renderTable()">
+    </div>
+
+    <div class="table-container">
+        <table id="journal-table">
+            <thead>
+                <tr>
+                    <th class="time-col">Время</th>
+                    <th class="dur-col">Длит.</th>
+                    <th>Описание</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <button class="btn-excel" onclick="exportToExcel()">📥 Скачать в Excel / CSV</button>
+    <button style="background:none; color:#ff3b30; font-size:0.75rem; margin-top:8px; width:100%; border:none;" onclick="clearAllData()">Очистить всю историю</button>
+</div>
+
+<script>
+    let activeLog = JSON.parse(localStorage.getItem('activeLog')) || null;
+    let logs = JSON.parse(localStorage.getItem('dayLogs')) || [];
+    let timerInterval;
+
+    function init() {
+        updateClock();
+        setInterval(updateClock, 1000);
+        
+        if (activeLog) {
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('stop-btn').disabled = false;
+            timerInterval = setInterval(updateStopwatch, 1000);
+        }
+        renderTable();
+    }
+
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('current-date').innerText = now.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+        document.getElementById('current-time').innerText = now.toLocaleTimeString('ru-RU');
+    }
+
+    function updateStopwatch() {
+        if (!activeLog) return;
+        const diffSec = Math.floor((new Date() - new Date(activeLog.startTime)) / 1000);
+        const hrs = String(Math.floor(diffSec / 3600)).padStart(2, '0');
+        const mins = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
+        const secs = String(diffSec % 60).padStart(2, '0');
+        document.getElementById('stopwatch').innerText = `${hrs}:${mins}:${secs}`;
+    }
+
+    function startOperation() {
+        const now = new Date();
+        activeLog = {
+            startTime: now.toISOString(),
+            displayStart: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
+            displayDate: now.toLocaleDateString('ru-RU'),
+            isoDate: now.toISOString().split('T')[0]
+        };
+        localStorage.setItem('activeLog', JSON.stringify(activeLog));
+        
+        document.getElementById('start-btn').disabled = true;
+        document.getElementById('stop-btn').disabled = false;
+        timerInterval = setInterval(updateStopwatch, 1000);
+    }
+
+    function stopOperation() {
+        if (!activeLog) return;
+        const now = new Date();
+        const commentText = document.getElementById('comment').value;
+        const diffSec = Math.floor((now - new Date(activeLog.startTime)) / 1000);
+        
+        const hrs = String(Math.floor(diffSec / 3600)).padStart(2, '0');
+        const mins = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
+        const secs = String(diffSec % 60).padStart(2, '0');
+
+        const newEntry = {
+            date: activeLog.displayDate,
+            isoDate: activeLog.isoDate,
+            start: activeLog.displayStart,
+            end: now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
+            duration: `${hrs}:${mins}:${secs}`,
+            comment: commentText || 'Без комментария'
+        };
+
+        logs.push(newEntry);
+        localStorage.setItem('dayLogs', JSON.stringify(logs));
+
+        activeLog = null;
+        localStorage.removeItem('activeLog');
+        clearInterval(timerInterval);
+        
+        document.getElementById('stopwatch').innerText = "00:00:00";
+        document.getElementById('comment').value = "";
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('stop-btn').disabled = true;
+
+        renderTable();
+    }
+
+    function toggleVoice() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert('Голосовой ввод на iPhone работает только при запуске страницы по протоколу HTTPS в браузерах Safari или Chrome.');
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'ru-RU';
+        recognition.interimResults = false;
+
+        const micBtn = document.getElementById('mic-btn');
+        recognition.onstart = () => { micBtn.style.background = '#ff3b30'; };
+        recognition.onresult = (e) => {
+            const transcript = e.results[0][0].transcript;
+            const input = document.getElementById('comment');
+            input.value += (input.value ? ' ' : '') + transcript;
+        };
+        recognition.onerror = (e) => { alert('Ошибка микрофона: ' + e.error); };
+        recognition.onend = () => { micBtn.style.background = '#5856d6'; };
+
+        try { recognition.start(); } catch (err) { alert('Ошибка вызова микрофона: ' + err.message); }
+    }
+
+    function getFilteredLogs() {
+        const mode = document.getElementById('filter-period').value;
+        const todayIso = new Date().toISOString().split('T')[0];
+        const currentMonth = todayIso.substring(0, 7);
+
+        return logs.filter(log => {
+            if (mode === 'today') return log.isoDate === todayIso;
+            if (mode === 'month') return log.isoDate && log.isoDate.startsWith(currentMonth);
+            if (mode === 'custom') {
+                const from = document.getElementById('date-from').value;
+                const to = document.getElementById('date-to').value;
+                if (from && log.isoDate < from) return false;
+                if (to && log.isoDate > to) return false;
+                return true;
+            }
+            return true;
+        });
+    }
+
+    function onFilterChange() {
+        const mode = document.getElementById('filter-period').value;
+        document.getElementById('custom-date-group').style.display = (mode === 'custom') ? 'grid' : 'none';
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.querySelector('#journal-table tbody');
+        tbody.innerHTML = '';
+        const filtered = getFilteredLogs();
+
+        filtered.slice().reverse().forEach(log => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="time-col">
+                    <b>${log.date}</b><br>
+                    <span class="sub-time">${log.start} - ${log.end}</span>
+                </td>
+                <td class="dur-col">${log.duration}</td>
+                <td>${log.comment}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Совместимый экспорт CSV/Excel для iOS Safari
+    function exportToExcel() {
+        const filtered = getFilteredLogs();
+        if (filtered.length === 0) {
+            alert('Нет данных для выгрузки!');
+            return;
+        }
+
+        let csvContent = "\uFEFF"; // UTF-8 BOM для корректного кириллического отображения в Excel
+        csvContent += "№;Дата;Старт;Стоп;Длительность;Комментарий\n";
+
+        filtered.forEach((log, index) => {
+            const cleanComment = (log.comment || '').replace(/;/g, ',').replace(/\n/g, ' ');
+            csvContent += `${index + 1};${log.date};${log.start};${log.end};${log.duration};"${cleanComment}"\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const fileName = `Рапорт_${new Date().toLocaleDateString('ru-RU')}.csv`;
+
+        if (navigator.share && /iPhone|iPad|iPod/.test(navigator.userAgent)) {
+            // Использование системного меню iOS "Поделиться / Сохранить в файлы"
+            const file = new File([blob], fileName, { type: 'text/csv' });
+            navigator.share({ files: [file] }).catch(() => {});
+        } else {
+            // Стандартное скачивание для остальных браузеров
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", fileName);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }
+
+    function clearOldData() {
+        if (!confirm('Удалить из истории все записи старше 30 дней?')) return;
+        const now = new Date();
+        const cutoff = new Date(now.setDate(now.getDate() - 30)).toISOString().split('T')[0];
+        logs = logs.filter(log => log.isoDate >= cutoff);
+        localStorage.setItem('dayLogs', JSON.stringify(logs));
+        renderTable();
+    }
+
+    function clearAllData() {
+        if (!confirm('Вы уверены, что хотите полностью очистить весь журнал?')) return;
+        logs = [];
+        localStorage.removeItem('dayLogs');
+        renderTable();
+    }
+
+    init();
+</script>
+</body>
+</html>
